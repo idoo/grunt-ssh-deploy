@@ -8,30 +8,11 @@
 
 'use strict';
 
-/* @throw Error: If privateKey or password field is not found */
-var getScpOptions = function(options) {
-    var scpOptions = {
-        port: options.port,
-        host: options.host,
-        username: options.username
-    };
-
-    if(options.privateKey)
-        scpOptions.privateKey = options.privateKey;
-    else
-        scpOptions.password = options.password;
-
-    if(!(scpOptions.privateKey || scpOptions.password)) throw new Error('Password or private key required.');
-
-    return scpOptions;
-};
-
 module.exports = function(grunt) {
 
     grunt.registerTask('ssh_deploy', 'Begin Deployment', function() {
-        var done = this.async();
+        this.async();
         var Connection = require('ssh2');
-        var client = require('scp2');
         var moment = require('moment');
         var timestamp = moment().format('YYYYMMDDHHmmssSSS');
         var async = require('async');
@@ -42,11 +23,7 @@ module.exports = function(grunt) {
             port: 22
         };
 
-        var options = extend({}, defaults, grunt.config.get('environments').options,
-            grunt.config.get('environments')[this.args]['options']);
-
-        // scp defaults
-        client.defaults(getScpOptions(options));
+        var options = extend({}, defaults, grunt.config.get('environments')[this.args]['options']);
 
         var c = new Connection();
         c.on('connect', function() {
@@ -75,7 +52,7 @@ module.exports = function(grunt) {
             var execLocal = function(cmd, next) {
                 var nextFun = next;
                 childProcessExec(cmd, function(err, stdout, stderr){
-                    grunt.log.debug(cmd);
+                    grunt.log.debug(cmd); 
                     grunt.log.debug('stdout: ' + stdout);
                     grunt.log.debug('stderr: ' + stderr);
                     if (err !== null) {
@@ -113,21 +90,14 @@ module.exports = function(grunt) {
 
 
             var onBeforeDeploy = function(callback){
-                if (typeof options.before_deploy == "undefined" || !options.before_deploy) {
+                var command = options.before_deploy;
+
+                if(command === undefined){
                     callback();
-                } else {
-                    var command = options.before_deploy;
-                    grunt.log.subhead("--------------- RUNNING PRE-DEPLOY COMMANDS");
-                    if (command instanceof Array) {
-                        async.eachSeries(command, function (command, callback) {
-                            grunt.log.subhead('--- ' + command);
-                            execRemote(command, options.debug, callback);
-                        }, callback);
-                    } else {
-                        grunt.log.subhead('--- ' + command);;
-                        execRemote(command, options.debug, callback);
-                    }
                 }
+                grunt.log.subhead("--------------- RUNNING PRE-DEPLOY COMMANDS");
+                grunt.log.subhead('--- ' + command);;
+                execRemote(command, options.debug, callback);
             };
 
             var createReleases = function(callback) {
@@ -138,20 +108,11 @@ module.exports = function(grunt) {
             };
 
             var scpBuild = function(callback) {
+                var remote_string = options.username + '@' + options.host + ':' + options.deploy_path + '/releases/' + timestamp + '/';
+                var command = 'scp -P ' + options.port + ' -r ' + options.local_path + '/. ' + remote_string;
                 grunt.log.subhead('--------------- UPLOADING NEW BUILD');
-                grunt.log.debug('SCP FROM LOCAL: ' + options.local_path
-                    + '\n TO REMOTE: ' + options.deploy_path + '/releases/' + timestamp + '/');
-
-                client.scp(options.local_path, {
-                    path: options.deploy_path + '/releases/' + timestamp + '/'
-                }, function (err) {
-                    if (err) {
-                        grunt.log.errorlns(err);
-                    } else {
-                        grunt.log.subhead('--- DONE UPLOADING');
-                        callback();
-                    }
-                });
+                grunt.log.subhead('--- ' + command);
+                execLocal(command, callback);
             };
 
             var updateSymlink = function(callback) {
@@ -171,30 +132,23 @@ module.exports = function(grunt) {
             };
 
             var onAfterDeploy = function(callback){
-                if (typeof options.after_deploy == "undefined" || !options.after_deploy) {
+                var command = options.after_deploy;
+                
+                if(!command){
                     callback();
-                } else {
-                    var command = options.after_deploy;
-                    grunt.log.subhead("--------------- RUNNING POST-DEPLOY COMMANDS");
-                    if (command instanceof Array) {
-                        async.eachSeries(command, function (command, callback) {
-                            grunt.log.subhead('--- ' + command);;
-                            execRemote(command, options.debug, callback);
-                        }, callback);
-                    } else {
-                        grunt.log.subhead('--- ' + command);;
-                        execRemote(command, options.debug, callback);
-                    }
                 }
+                grunt.log.subhead("--------------- RUNNING POST-DEPLOY COMMANDS");
+                grunt.log.subhead('--- ' + command);
+                execRemote(command, options.debug, callback);
             };
 
             // closing connection to remote server
             var closeConnection = function(callback) {
                 connection.end();
 
-                callback();
+                return true;
             };
-
+    
             async.series([
                 onBeforeDeploy,
                 createReleases,
@@ -202,9 +156,7 @@ module.exports = function(grunt) {
                 updateSymlink,
                 onAfterDeploy,
                 closeConnection
-            ], function () {
-                done();
-            });
+            ]);
         };
     });
 };
